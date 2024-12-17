@@ -1,0 +1,182 @@
+# Name of the GitHub Actions workflow
+name: switch365 live build workflow
+
+# Trigger the workflow manually from the GitHub UI
+on:
+  # Trigger on manual execution via GitHub UI
+  workflow_dispatch
+  
+  # Trigger on push to develop or master branches
+  #push:
+  # branches:
+  #   - main
+  #   - develop
+  #pull_request:
+  #  branches:
+  #   - main  # Trigger on pull requests targeting the develop branch
+
+# Set environment variables to be used throughout the workflow
+#env:
+  # AWS region where resources will be deployed
+  #AWS_REGION: us-east-2
+  # Amazon Elastic Container Registry (ECR) repository name
+  #ECR_REPOSITORY: vprofileapp
+  # Amazon Elastic Kubernetes Service (EKS) cluster name
+  #EKS_CLUSTER: vprofile-eks
+
+# Define a job named "Testing" for code quality and security checks
+jobs:
+  BuildArtifactForLive:
+    # Specify that the job should run on the latest version of Ubuntu
+    runs-on: ubuntu-latest
+
+    # Define steps to execute within this job
+    steps:
+      # Step to check out the code from the GitHub repository
+      # Downloading or copying the code from a GitHub repository to the server or environment where the GitHub Actions workflow is running.
+      - name: Code checkout
+        uses: actions/checkout@v4
+       
+
+       # Step 2: Set up Node.js environment (using version 16 in this case)
+      #- name: Set up Node.js
+       # uses: actions/setup-node@v3
+        #with:
+          #node-version: '16'
+
+      # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
+      - name: Setup Node.js 20.12.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.12.0'
+          #cache: 'npm'
+   
+      # Install dependencies using Yarn
+      - name: Install dependencies
+        id: install_dependencies
+        run: yarn install  # Use yarn to install dependencies from package.json
+
+      # Build the project using yarn
+      - name: Build the switch365
+        id: build_project
+        run: yarn build  # This runs the build script in package.json, typically generating the 'dist' folder
+
+      #=====================================================
+      #EC2 LINUX SERVER DEPLOYMENT TOMCAT OR APACHE
+      #=====================================================
+      # Step1 to log in to the Amazon EC2 instance using SSH
+      #- name: Access EC2 instance
+      #  uses: webfactory/ssh-agent@v0.9.0
+      #  with:
+      #    ssh-private-key: ${{ secrets.EC2_KEY }}
+
+      # Step2 : resspve2 fingerprint issue
+      #- name: Add EC2 host to known_hosts
+      #  run: |
+      #    mkdir -p ~/.ssh
+      #    ssh-keyscan -H ${{ secrets.EC2_IP }} >> ~/.ssh/known_hosts
+
+      #=====================================================
+      #EC2 LINUX SERVER DEPLOYMENT - TOMCAT 
+      #=====================================================
+      # Step3 : TOMCAT folder permission
+      # Deploy to EC2 # if the ubuntu user has the necessary permissions
+      #- name: Deploy to EC2
+      #  run: |
+      #    scp -r ./dist/* ubuntu@${{ secrets.EC2_IP }}:/usr/local/tomcat/webapps/webt/
+      #    ssh ubuntu@${{ secrets.EC2_IP }} 'sudo systemctl restart tomcat'
+
+      #Step3 : uploading code to tomcat server
+      #- name: Deploy to EC2  # if ubuntu user does not have necessary permissions
+      #  run: |
+      #    scp -r ./dist/* ubuntu@${{ secrets.EC2_IP }}:/tmp/
+      #    ssh ubuntu@${{ secrets.EC2_IP }} 'sudo mv /tmp/* /usr/local/tomcat/webapps/myweb/ && sudo systemctl restart tomcat'
+
+      #=====================================================
+      #EC2 LINUX SERVER DEPLOYMENT - Apache2 server 
+      #=====================================================
+      #Apache2 server
+      #- name: Deploy to EC2  # if ubuntu user does not have necessary permissions
+      #  run: |
+      #    scp -r ./dist/* ubuntu@${{ secrets.EC2_IP }}:/tmp/
+      #    ssh ubuntu@${{ secrets.EC2_IP }} 'sudo mv /tmp/* /var/www/html/' 
+        # && sudo systemctl restart apache2
+
+
+      #=====================================================
+      #IIS SERVER DEPLOYMENT USING FTP
+      #=====================================================
+      - name: Set up FTP client
+        id: setup_ftp
+        if: steps.install_dependencies.outcome == 'success' && steps.build_project.outcome == 'success'
+        run: sudo apt-get install lftp
+
+      - name: Upload to IIS FTP server
+        if: steps.install_dependencies.outcome == 'success' && steps.build_project.outcome == 'success'
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_PORT: ${{ secrets.FTP_PORT }}
+        # Use lftp to upload files to FTP
+        run: |
+          lftp -u $FTP_USERNAME,$FTP_PASSWORD -p $FTP_PORT $FTP_HOST <<EOF
+          mirror -R ./dist /
+          quit
+          EOF
+
+      - name: Check Build Success
+        if: steps.build_project.outcome != 'success'
+        run: |
+          echo "🚨 Build failed! Failing the workflow intentionally."
+          exit 1
+
+      #=====================================================
+      #Code quality checks
+      #=====================================================
+      # Step to run Maven tests to ensure functionality
+      #- name: Maven test
+        #run: mvn test
+
+      # Step to run Checkstyle for code quality checks
+      #- name: Checkstyle
+        #run: mvn checkstyle:checkstyle
+
+      # Step to set up Java 11 as the default version
+      #- name: Set Java 11
+        #uses: actions/setup-java@v3
+        #with:
+          # Specify the Java distribution to use (Temurin)
+          #distribution: 'temurin'
+          # Specify Java version as 11
+          #java-version: '11'
+
+      # Step to set up the SonarQube scanner
+      #- name: Setup SonarQube
+        #uses: warchant/setup-sonar-scanner@v7
+
+      # Step to run SonarQube analysis and send results to the SonarQube server
+      #- name: SonarQube Scan
+        #run: |
+          #sonar-scanner \
+           #-Dsonar.host.url=${{ secrets.SONAR_URL }} \
+           #-Dsonar.login=${{ secrets.SONAR_TOKEN }} \
+           #-Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }} \
+           #-Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} \
+           #-Dsonar.sources=src/ \
+           #-Dsonar.junit.reportsPath=target/surefire-reports/ \
+           #-Dsonar.jacoco.reportsPath=target/jacoco.exec \
+           #-Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml \
+           #-Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/
+
+      # Step to check SonarQube quality gate status (verify that code meets quality standards)
+      #- name: SonarQube Quality Gate check
+        #id: sonarqube-quality-gate-check
+        #uses: sonarsource/sonarqube-quality-gate-action@master
+        # Timeout to fail the step after 5 minutes if it takes too long
+        #timeout-minutes: 5
+        #env:
+          # SonarQube token for authentication
+          #SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          # URL for the SonarQube server (optional)
+          #SONAR_HOST_URL: ${{ secrets.SONAR_URL }}
